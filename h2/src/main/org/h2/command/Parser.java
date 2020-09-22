@@ -245,6 +245,8 @@ public class Parser {
     private ArrayList<Parameter> indexedParameterList;
     private int orderInFrom;
     private ArrayList<Parameter> suppliedParameterList;
+    /** mark if the SQL is from snowball. */
+    private boolean fromSnowball;
 
     public Parser(Session session) {
         this.database = session.getDatabase();
@@ -277,7 +279,7 @@ public class Parser {
         try {
             Prepared p = parse(sql);
             boolean hasMore = isToken(";");
-            if (!hasMore && currentTokenType != END) {
+            if (!hasMore && !fromSnowball && currentTokenType != END) {
                 throw getSyntaxError();
             }
             p.prepare();
@@ -331,6 +333,12 @@ public class Parser {
         createView = null;
         recompileAlways = false;
         indexedParameterList = suppliedParameterList;
+
+        /** Check if there is "snowball dialect" in the originalSQL.*/
+        /** The data type without Nullable is NOT NULL. */
+        fromSnowball = false;
+        if (originalSQL.contains("snowball dialect"))
+            fromSnowball = true;
         read();
         return parsePrepared();
     }
@@ -1687,7 +1695,7 @@ public class Parser {
             ifExists = readIfExists(ifExists);
             command.setIfExists(ifExists);
             return command;
-        } else if (readIf("SCHEMA")) {
+        } else if (readIf("SCHEMA") || readIf("DATABASE")) {
             boolean ifExists = readIfExists(false);
             DropSchema command = new DropSchema(session);
             command.setSchemaName(readUniqueIdentifier());
@@ -4324,6 +4332,7 @@ public class Parser {
         String original = currentToken;
         boolean regular = false;
         int originalScale = -1;
+        boolean nullable = false;
         if (readIf("LONG")) {
             if (readIf("RAW")) {
                 original += " RAW";
@@ -4371,6 +4380,16 @@ public class Parser {
                 original += " WITHOUT TIME ZONE";
             }
         } else {
+            if (readIf("NULLABLE")) {
+                /** snowball data type, Nullable(UInt8) */
+                read("(");
+                nullable = true;
+                original = currentToken;
+            }
+
+            if (original.equals("FIXEDSTRING"))
+                original = "CHAR";
+
             regular = true;
         }
         long precision = -1;
@@ -4398,7 +4417,7 @@ public class Parser {
             dataType = DataType.getTypeByName(original, mode);
             if (dataType == null || mode.disallowedTypes.contains(original)) {
                 throw DbException.get(ErrorCode.UNKNOWN_DATA_TYPE_1,
-                        currentToken);
+                        original);
             }
         }
         if (database.getIgnoreCase() && dataType.type == Value.STRING &&
@@ -4440,6 +4459,10 @@ public class Parser {
                         precision = displaySize = ValueTimestampTimeZone.getDisplaySize(originalScale);
                         break;
                     }
+                } else if (t == Value.TIMESTAMP && original.equals("DATETIME")) {
+                    original = "TIMESTAMP(0) WITHOUT TIME ZONE";
+                    scale = 0;
+                    precision = displaySize = ValueTimestamp.getDisplaySize(scale);
                 }
             } else if (readIf("(")) {
                 if (!readIf("MAX")) {
@@ -4454,17 +4477,36 @@ public class Parser {
                     if (p > Long.MAX_VALUE) {
                         p = Long.MAX_VALUE;
                     }
-                    original += "(" + p;
-                    // Oracle syntax
-                    if (!readIf("CHAR")) {
-                        readIf("BYTE");
+                    // Decimal32(S), the number in the () is scale.
+                    if(t == Value.DECIMAL && (original.equals("DECIMAL32") ||
+                                              original.equals("DECIMAL64") || original.equals("DECIMAL128"))) {
+                        scale = (int) p;
+                        switch (original) {
+                            case "DECIMAL32":
+                                p = 9;
+                                break;
+                            case "DECIMAL64":
+                                p = 18;
+                                break;
+                            case "DECIMAL128":
+                                p = 38;
+                                break;
+                        }
+                        original = "DECIMAL(" + p + "," + scale;
                     }
-                    if (dataType.supportsScale) {
-                        if (readIf(",")) {
-                            scale = readInt();
-                            original += ", " + scale;
-                        } else {
-                            scale = 0;
+                    else {
+                        original += "(" + p;
+                        // Oracle syntax
+                        if (!readIf("CHAR")) {
+                            readIf("BYTE");
+                        }
+                        if (dataType.supportsScale) {
+                            if (readIf(",")) {
+                                scale = readInt();
+                                original += ", " + scale;
+                            } else {
+                                scale = 0;
+                            }
                         }
                     }
                     precision = p;
@@ -4472,6 +4514,10 @@ public class Parser {
                     original += ")";
                 }
                 read(")");
+            } else if (t == Value.DECIMAL && original.equals("UINT64")) {
+                original = "DECIMAL";
+                precision = 20;
+                scale = 0;
             }
         } else if (dataType.type == Value.DOUBLE && original.equals("FLOAT")) {
             if (readIf("(")) {
@@ -4521,6 +4567,11 @@ public class Parser {
         }
         // MySQL compatibility
         readIf("UNSIGNED");
+
+        // Nullable(type)
+        if (nullable)
+            read(")");
+
         int type = dataType.type;
         if (scale > precision) {
             throw DbException.get(ErrorCode.INVALID_VALUE_SCALE_PRECISION,
@@ -4544,6 +4595,11 @@ public class Parser {
         }
         column.setComment(comment);
         column.setOriginalSQL(original);
+
+        /** The default behavior is: "a int" means a is nullable. But not in snowball. */
+        if (fromSnowball && !nullable)
+            column.setNullable(false);
+
         return column;
     }
 
@@ -4566,7 +4622,7 @@ public class Parser {
             return parseCreateTrigger(force);
         } else if (readIf("ROLE")) {
             return parseCreateRole();
-        } else if (readIf("SCHEMA")) {
+        } else if (readIf("SCHEMA") || readIf("DATABASE")) {
             return parseCreateSchema();
         } else if (readIf("CONSTANT")) {
             return parseCreateConstant();
@@ -6564,6 +6620,13 @@ public class Parser {
         command.setIfNotExists(ifNotExists);
         command.setTableName(tableName);
         command.setComment(readCommentIf());
+
+        // Skip "ON CLUSTER cluster" in DDL statements
+        if (readIf("ON")) {
+            read("CLUSTER");
+            readUniqueIdentifier();
+        }
+
         if (readIf("(")) {
             if (!readIf(")")) {
                 do {
@@ -6578,6 +6641,11 @@ public class Parser {
                 readString();
             }
         }
+
+        /** Nothing to parse for snowball dialect. */
+        if (fromSnowball)
+            return command;
+
         if (readIf("ENGINE")) {
             if (readIf("=")) {
                 // map MySQL engine types onto H2 behavior
@@ -6734,6 +6802,33 @@ public class Parser {
                 ref.setTableName(tableName);
                 parseReferences(ref, schema, tableName);
                 command.addConstraintCommand(ref);
+            }
+
+            if (fromSnowball) {
+                if (column.getComment() != null) {
+                    /** find "primary key" in column's comment */
+                    String comment = column.getComment().toLowerCase();
+                    if (comment.indexOf("primary") >= 0 &&
+                            comment.substring(comment.indexOf("primary") + 7).trim().startsWith("key")) {
+                        IndexColumn[] cols = { new IndexColumn() };
+                        cols[0].columnName = column.getName();
+                        AlterTableAddConstraint pk = new AlterTableAddConstraint(
+                                session, schema, false);
+                        pk.setType(CommandInterface.ALTER_TABLE_ADD_CONSTRAINT_PRIMARY_KEY);
+                        pk.setTableName(tableName);
+                        pk.setIndexColumns(cols);
+                        command.addConstraintCommand(pk);
+                    }
+                }
+                /** Skip TTL expr for column "TTL a + INTERVAL 1 MONTH" */
+                if (readIf("TTL")) {
+                    readExpression();
+                    do {
+                        read();
+                        if (currentToken.equals(",") || currentToken.equals(")"))
+                            break;
+                    }while(true);
+                }
             }
         }
     }

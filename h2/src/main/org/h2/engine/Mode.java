@@ -205,6 +205,22 @@ public class Mode {
     static {
         Mode mode = new Mode(ModeEnum.REGULAR.name());
         mode.nullConcatIsNull = true;
+        mode.typeByNameMap.put("INT8", DataType.getDataType(Value.BYTE));
+        mode.typeByNameMap.put("UINT8", DataType.getDataType(Value.SHORT));
+        mode.typeByNameMap.put("INT16", DataType.getDataType(Value.SHORT));
+        mode.typeByNameMap.put("UINT16", DataType.getDataType(Value.INT));
+        mode.typeByNameMap.put("INT32", DataType.getDataType(Value.INT));
+        mode.typeByNameMap.put("UINT32", DataType.getDataType(Value.LONG));
+        mode.typeByNameMap.put("INT64", DataType.getDataType(Value.LONG));
+        mode.typeByNameMap.put("FLOAT32", DataType.getDataType(Value.FLOAT));
+        mode.typeByNameMap.put("FLOAT64", DataType.getDataType(Value.DOUBLE));
+        mode.typeByNameMap.put("STRING", DataType.getDataType(Value.STRING));
+        mode.typeByNameMap.put("DATETIME", DataType.getDataType(Value.TIMESTAMP));
+        mode.typeByNameMap.put("FIXEDSTRING", DataType.getDataType(Value.STRING_FIXED));
+        mode.typeByNameMap.put("UINT64", DataType.getDataType(Value.DECIMAL));
+        mode.typeByNameMap.put("DECIMAL32", DataType.getDataType(Value.DECIMAL));
+        mode.typeByNameMap.put("DECIMAL64", DataType.getDataType(Value.DECIMAL));
+        mode.typeByNameMap.put("DECIMAL128", DataType.getDataType(Value.DECIMAL));
         add(mode);
 
         mode = new Mode(ModeEnum.DB2.name());
