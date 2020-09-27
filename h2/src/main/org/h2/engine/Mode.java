@@ -221,6 +221,7 @@ public class Mode {
         mode.typeByNameMap.put("DECIMAL32", DataType.getDataType(Value.DECIMAL));
         mode.typeByNameMap.put("DECIMAL64", DataType.getDataType(Value.DECIMAL));
         mode.typeByNameMap.put("DECIMAL128", DataType.getDataType(Value.DECIMAL));
+        mode.typeByNameMap.put("DATETIME64", DataType.getDataType(Value.TIMESTAMP));
         add(mode);
 
         mode = new Mode(ModeEnum.DB2.name());

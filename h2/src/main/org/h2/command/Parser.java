@@ -4459,10 +4459,26 @@ public class Parser {
                         precision = displaySize = ValueTimestampTimeZone.getDisplaySize(originalScale);
                         break;
                     }
-                } else if (t == Value.TIMESTAMP && original.equals("DATETIME")) {
-                    original = "TIMESTAMP(0) WITHOUT TIME ZONE";
-                    scale = 0;
-                    precision = displaySize = ValueTimestamp.getDisplaySize(scale);
+                } else if (t == Value.TIMESTAMP ) {
+                    if (original.equals("DATETIME")) {
+                        original = "TIMESTAMP(0) WITHOUT TIME ZONE";
+                        scale = 0;
+                        precision = displaySize = ValueTimestamp.getDisplaySize(scale);
+                    }
+                    else if (original.equals("DATETIME64")) {
+                        // DateTime64(precision, 'Asia/Shanghai')
+                        if (readIf("(")){
+                            scale = readPositiveInt();
+                            if (readIf(",")) {
+                                // skip the timezone, ignite doesn't support it.
+                                readString();
+                            }
+                            read(")");
+                        } else
+                            scale = 3;
+                        original = "TIMESTAMP(" + scale + ") WITHOUT TIME ZONE";
+                        precision = displaySize = ValueTimestamp.getDisplaySize(scale);
+                    }
                 }
             } else if (readIf("(")) {
                 if (!readIf("MAX")) {
@@ -6642,9 +6658,17 @@ public class Parser {
             }
         }
 
-        /** Nothing to parse for snowball dialect. */
-        if (fromSnowball)
+        /** Add "backups=1" in normal table ddl with storage engine from snowball */
+        /** For sync ddls, there is no engine, but containg WITH like ignite syntax. */
+        if (fromSnowball && readIf("ENGINE")) {
+            String backups = "backups=1";
+
+            ArrayList<String> tableEngineParams = New.arrayList();
+            tableEngineParams.add(backups);
+            command.setTableEngineParams(tableEngineParams);
+
             return command;
+        }
 
         if (readIf("ENGINE")) {
             if (readIf("=")) {
@@ -6820,6 +6844,19 @@ public class Parser {
                         command.addConstraintCommand(pk);
                     }
                 }
+                /** Skip CODEC */
+                if (readIf("CODEC")) {
+                    read("(");
+                    do {
+                        readUniqueIdentifier();
+                        if(readIf("(")) {
+                            readInt();
+                            read(")");
+                        }
+                    } while(readIf(","));
+                    read(")");
+                }
+
                 /** Skip TTL expr for column "TTL a + INTERVAL 1 MONTH" */
                 if (readIf("TTL")) {
                     readExpression();
