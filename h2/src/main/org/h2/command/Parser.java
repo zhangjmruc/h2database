@@ -6830,10 +6830,10 @@ public class Parser {
 
             if (fromSnowball) {
                 if (column.getComment() != null) {
-                    /** find "primary key" in column's comment */
+                    /** find "unique id" in column's comment */
                     String comment = column.getComment().toLowerCase();
-                    if (comment.indexOf("primary") >= 0 &&
-                            comment.substring(comment.indexOf("primary") + 7).trim().startsWith("key")) {
+                    if (comment.indexOf("unique") >= 0 &&
+                            comment.substring(comment.indexOf("unique") + 6).trim().startsWith("id")) {
                         IndexColumn[] cols = { new IndexColumn() };
                         cols[0].columnName = column.getName();
                         AlterTableAddConstraint pk = new AlterTableAddConstraint(
